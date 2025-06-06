@@ -1,0 +1,14 @@
+---
+- name: "PRODUCTION Zabbix Server Installation"
+  hosts: zabbix_server
+  become: yes
+  roles:
+    - zabbix_server
+  tags: [zabbix_server]
+
+- name: "PRODUCTION Zabbix Agent Installation"  
+  hosts: zabbix_agent
+  become: yes
+  roles:
+    - zabbix_agent
+  tags: [zabbix_agent]

@@ -1,0 +1,29 @@
+# Zabbix Server переменные
+zabbix_version: "7.0"
+zabbix_db_name: "zabbix"
+zabbix_db_user: "zabbix"
+zabbix_db_password: "{{ vault_zabbix_db_password }}"
+zabbix_server_name: "Zabbix Production Server"
+
+# MySQL/MariaDB настройки
+mysql_root_password: "{{ vault_mysql_root_password }}"
+
+# Nginx настройки
+nginx_server_name: "{{ ansible_default_ipv4.address }}"
+nginx_listen_port: 80
+
+# Telegram настройки
+telegram_bot_token: "{{ tg_bot_token }}"
+telegram_chat_id: "{{ tg_chat_id }}"
+user_surname: "{{ vault_user_surname }}"
+
+# PHP настройки с ПРАВИЛЬНЫМИ значениями для Zabbix
+php_version: "8.1"
+php_timezone: "Europe/Moscow"
+php_max_execution_time: 300
+php_max_input_time: 300
+php_memory_limit: "256M"
+php_post_max_size: "16M"
+php_upload_max_filesize: "16M"
+
+ubuntu_codename: "{{ ansible_distribution_release }}"

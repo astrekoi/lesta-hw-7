@@ -1,0 +1,31 @@
+---
+- name: restart mariadb
+  systemd:
+    name: mariadb
+    state: restarted
+  listen: restart mariadb
+
+- name: restart zabbix-server
+  systemd:
+    name: zabbix-server
+    state: restarted
+  listen: restart zabbix-server
+
+- name: restart nginx
+  systemd:
+    name: nginx
+    state: restarted
+  listen: restart nginx
+
+- name: restart php-fpm
+  systemd:
+    name: "php{{ php_version }}-fpm"
+    state: restarted
+  listen: restart php-fpm
+  ignore_errors: yes
+
+- name: reload nginx
+  systemd:
+    name: nginx
+    state: reloaded
+  listen: reload nginx

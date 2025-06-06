@@ -1,0 +1,113 @@
+# Сгенерировано Ansible - НЕ РЕДАКТИРОВАТЬ ВРУЧНУЮ!
+
+#!/bin/bash
+
+TELEGRAM_BOT_TOKEN="{{ telegram_bot_token }}"
+CHAT_ID="{{ telegram_chat_id }}"
+USER_SURNAME="{{ user_surname }}"
+
+SENDTO="$1"
+SUBJECT="$2"
+MESSAGE="$3"
+
+if [ -z "$SENDTO" ] || [ -z "$SUBJECT" ] || [ -z "$MESSAGE" ]; then
+    echo "ОШИБКА: Не все параметры переданы"
+    exit 1
+fi
+
+LOG_FILE="/var/log/zabbix/telegram.log"
+if [ ! -f "$LOG_FILE" ]; then
+    sudo mkdir -p /var/log/zabbix 2>/dev/null || true
+    sudo touch "$LOG_FILE" 2>/dev/null || true
+    sudo chown zabbix:zabbix "$LOG_FILE" 2>/dev/null || true
+    sudo chmod 664 "$LOG_FILE" 2>/dev/null || true
+fi
+
+safe_log() {
+    local message="$1"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $message" >> "$LOG_FILE" 2>/dev/null
+}
+
+escape_markdown() {
+    echo "$1" | sed 's/[_*\[`]/\\&/g'
+}
+
+ESCAPED_SUBJECT=$(escape_markdown "$SUBJECT")
+ESCAPED_MESSAGE=$(escape_markdown "$MESSAGE")
+
+FULL_MESSAGE="🚨 *Zabbix Alert от ${USER_SURNAME}*
+
+*Тема:* ${ESCAPED_SUBJECT}
+
+*Сообщение:*
+${ESCAPED_MESSAGE}
+
+*Время:* $(date '+%Y-%m-%d %H:%M:%S')
+*Сервер:* $(hostname)"
+
+send_telegram() {
+    local max_retries=3
+    local retry_count=0
+    
+    safe_log "Отправка уведомления от ${USER_SURNAME}"
+    
+    while [ $retry_count -lt $max_retries ]; do
+        retry_count=$((retry_count + 1))
+        
+        response=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${SENDTO}" \
+            -d "text=${FULL_MESSAGE}" \
+            -d "parse_mode=Markdown" \
+            --connect-timeout 10 \
+            --max-time 30 2>&1)
+        
+        http_code=$(echo "$response" | tail -n1 | sed 's/.*HTTP_CODE://')
+        response_body=$(echo "$response" | sed '$d')
+        
+        if [ "$http_code" = "200" ] && echo "$response_body" | grep -q '"ok":true'; then
+            safe_log "Уведомление отправлено успешно"
+            echo "Уведомление отправлено успешно в Telegram"
+            exit 0
+        else
+            if [ "$http_code" = "400" ]; then
+                safe_log "Ошибка: неправильные параметры запроса"
+            elif [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
+                safe_log "Ошибка: проблема с токеном или доступом"
+            elif [ "$http_code" = "404" ]; then
+                safe_log "Ошибка: чат не найден"
+            elif [ -z "$http_code" ]; then
+                safe_log "Сетевая ошибка"
+            else
+                safe_log "HTTP ошибка $http_code"
+            fi
+            
+            if [ $retry_count -lt $max_retries ]; then
+                echo "Попытка $retry_count из $max_retries не удалась. Повтор через 5 секунд..."
+                sleep 5
+            fi
+        fi
+    done
+    
+    safe_log "ОШИБКА: Не удалось отправить уведомление после $max_retries попыток"
+    echo "ОШИБКА: Не удалось отправить уведомление в Telegram после $max_retries попыток"
+    exit 1
+}
+
+check_api() {
+    api_check=$(curl -s --connect-timeout 5 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe" 2>&1)
+    
+    if ! echo "$api_check" | grep -q '"ok":true'; then
+        safe_log "Ошибка доступа к Telegram API"
+        echo "ОШИБКА: Проблема с доступом к Telegram API"
+        exit 1
+    fi
+}
+
+main() {
+    safe_log "Запуск скрипта уведомлений"
+    check_api
+    send_telegram
+}
+
+main "$@"

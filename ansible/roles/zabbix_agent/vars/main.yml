@@ -1,0 +1,9 @@
+# Zabbix Agent переменные
+zabbix_version: "7.0"
+zabbix_server_ip: "{{ hostvars['zabbix_server']['ansible_host'] }}"
+zabbix_agent_hostname: "{{ ansible_hostname }}"
+zabbix_agent_timeout: 30
+zabbix_agent_refresh_active_checks: 120
+zabbix_agent_buffer_send: 5
+zabbix_agent_buffer_size: 100
+zabbix_agent_max_lines_per_second: 20

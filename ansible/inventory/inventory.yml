@@ -1,0 +1,9 @@
+---
+all:
+  children:
+    zabbix_servers:
+      hosts:
+        zabbix_server:
+    zabbix_agents:
+      hosts:
+        zabbix_agent:

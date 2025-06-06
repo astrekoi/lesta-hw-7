@@ -1,0 +1,32 @@
+# Сгенерировано Ansible - НЕ РЕДАКТИРОВАТЬ ВРУЧНУЮ!
+
+# Мониторинг использования CPU (для триггера > 80%)
+UserParameter=cpu.usage.idle,cat /proc/stat | head -1 | awk '{print ($5*100)/($2+$3+$4+$5+$6+$7+$8)}'
+UserParameter=cpu.usage.system,cat /proc/stat | head -1 | awk '{print ($4*100)/($2+$3+$4+$5+$6+$7+$8)}'
+UserParameter=cpu.usage.user,cat /proc/stat | head -1 | awk '{print ($2*100)/($2+$3+$4+$5+$6+$7+$8)}'
+
+# Мониторинг памяти
+UserParameter=memory.usage.percent,free | grep Mem | awk '{printf("%.2f", ($3/$2)*100)}'
+UserParameter=memory.available.percent,free | grep Mem | awk '{printf("%.2f", ($7/$2)*100)}'
+
+# Мониторинг дискового пространства
+UserParameter=disk.usage.percent[*],df -h $1 | tail -1 | awk '{print $5}' | sed 's/%//'
+
+# Мониторинг сетевых подключений
+UserParameter=network.connections.established,netstat -an | grep ESTABLISHED | wc -l
+UserParameter=network.connections.listening,netstat -an | grep LISTEN | wc -l
+
+# Мониторинг процессов
+UserParameter=process.count[*],ps aux | grep -v grep | grep -c "$1"
+
+# PRODUCTION мониторинг сервисов
+UserParameter=service.status[*],systemctl is-active $1 | grep -c "active"
+
+# Мониторинг load average для триггеров
+UserParameter=system.load1,uptime | awk '{print $(NF-2)}' | sed 's/,//'
+UserParameter=system.load5,uptime | awk '{print $(NF-1)}' | sed 's/,//'
+UserParameter=system.load15,uptime | awk '{print $NF}'
+
+# Логи приложений для мониторинга ошибок
+UserParameter=log.error.count[*],grep -c "ERROR" $1 2>/dev/null || echo 0
+UserParameter=log.warning.count[*],grep -c "WARNING" $1 2>/dev/null || echo 0

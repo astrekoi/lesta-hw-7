@@ -1,0 +1,33 @@
+; Сгенерировано Ansible - НЕ РЕДАКТИРОВАТЬ ВРУЧНУЮ!
+
+; Временная зона
+date.timezone = {{ php_timezone }}
+
+; Димиты выполнения для Zabbix
+max_execution_time = {{ php_max_execution_time }}
+max_input_time = {{ php_max_input_time }}
+memory_limit = {{ php_memory_limit }}
+
+; Загрузка файлов для Zabbix
+post_max_size = {{ php_post_max_size }}
+upload_max_filesize = {{ php_upload_max_filesize }}
+max_file_uploads = 20
+
+; Сессии для безопасности Zabbix
+session.auto_start = 0
+session.cookie_httponly = 1
+session.cookie_secure = 0
+session.use_only_cookies = 1
+
+; Security настройки
+expose_php = Off
+display_errors = Off
+log_errors = On
+error_log = /var/log/php_errors.log
+
+; Специфичные для Zabbix настройки
+mbstring.func_overload = 0
+always_populate_raw_post_data = -1
+max_input_vars = 10000
+default_socket_timeout = 300
+mysql.default_socket = /var/run/mysqld/mysqld.sock

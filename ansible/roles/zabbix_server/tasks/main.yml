@@ -1,0 +1,355 @@
+---
+- name: "ПРОВЕРКА: Поддерживаемая версия Ubuntu"
+  fail:
+    msg: "Неподдерживаемая версия Ubuntu: {{ ansible_distribution_version }}. Поддерживаются: 20.04, 22.04, 24.04"
+  when: ansible_distribution_version not in ['20.04', '22.04', '24.04']
+
+- name: "Информация о системе"
+  debug:
+    msg:
+      - "Система: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+      - "Архитектура: {{ ansible_architecture }}"
+      - "Hostname: {{ ansible_hostname }}"
+      - "IP адрес: {{ ansible_default_ipv4.address }}"
+
+- name: "Обновление системы (PRODUCTION SAFETY)"
+  apt:
+    update_cache: yes
+    upgrade: yes
+    cache_valid_time: 3600
+  tags: [system_update]
+
+- name: "Установка необходимых зависимостей"
+  apt:
+    name:
+      - wget
+      - curl
+      - gnupg2
+      - software-properties-common
+      - apt-transport-https
+      - ca-certificates
+    state: present
+    update_cache: yes
+
+- name: "Добавление Ondrej PHP PPA репозитория для PHP 8.1"
+  apt_repository:
+    repo: "ppa:ondrej/php"
+    state: present
+    update_cache: yes
+  register: php_ppa_added
+
+- name: "Принудительное обновление кэша после добавления PHP PPA"
+  apt:
+    update_cache: yes
+    cache_valid_time: 0
+  when: php_ppa_added is changed
+
+- name: "Проверка доступности PHP 8.1 пакетов"
+  shell: "apt-cache policy php8.1-fpm"
+  register: php_availability
+  changed_when: false
+  failed_when: "'Unable to locate package' in php_availability.stderr"
+
+- name: "Добавление официального репозитория Zabbix 7.0 LTS"
+  get_url:
+    url: "https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.0-2+ubuntu{{ ansible_distribution_version }}_all.deb"
+    dest: /tmp/zabbix-release.deb
+    mode: '0644'
+
+- name: "Установка пакета репозитория Zabbix"
+  apt:
+    deb: /tmp/zabbix-release.deb
+    state: present
+
+- name: "Обновление кэша пакетов после добавления репозитория"
+  apt:
+    update_cache: yes
+
+- name: "Установка PHP 8.1 и необходимых модулей"
+  apt:
+    name:
+      - "php{{ php_version }}-fpm"
+      - "php{{ php_version }}-mysql"
+      - "php{{ php_version }}-xml"
+      - "php{{ php_version }}-bcmath"
+      - "php{{ php_version }}-mbstring"
+      - "php{{ php_version }}-gd"
+      - "php{{ php_version }}-ldap"
+      - "php{{ php_version }}-curl"
+      - "php{{ php_version }}-zip"
+    state: present
+    update_cache: yes
+  notify: restart php-fpm
+
+- name: "Установка Zabbix Server, Frontend, Agent и nginx"
+  apt:
+    name:
+      - zabbix-server-mysql
+      - zabbix-frontend-php
+      - zabbix-nginx-conf
+      - zabbix-sql-scripts
+      - zabbix-agent
+      - nginx
+    state: present
+    update_cache: yes
+  notify:
+    - restart nginx
+    - restart zabbix-server
+
+- name: "Создание дополнительных директорий Zabbix"
+  file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "/var/log/zabbix", owner: "zabbix", group: "zabbix", mode: "0755" }
+    - { path: "/var/run/zabbix", owner: "zabbix", group: "zabbix", mode: "0755" }
+    - { path: "/usr/lib/zabbix/alertscripts", owner: "zabbix", group: "zabbix", mode: "0755" }
+    - { path: "/usr/lib/zabbix/externalscripts", owner: "zabbix", group: "zabbix", mode: "0755" }
+
+- name: "Настройка конфигурации Zabbix Server"
+  template:
+    src: zabbix_server.conf.j2
+    dest: /etc/zabbix/zabbix_server.conf
+    owner: root
+    group: zabbix
+    mode: '0640'
+    backup: yes
+  notify: restart zabbix-server
+
+- name: "Проверка конфигурации Zabbix Server"
+  shell: "zabbix_server -T"
+  register: config_test
+  failed_when: "'validation successful' not in config_test.stdout|lower"
+  changed_when: false
+
+- name: "Настройка MariaDB для Ubuntu 24.04+"
+  block:
+    - name: "Установка MariaDB сервера"
+      apt:
+        name:
+          - mariadb-server
+          - mariadb-client
+          - python3-pymysql
+        state: present
+      notify: restart mariadb
+
+    - name: "Запуск и автозагрузка MariaDB"
+      systemd:
+        name: mariadb
+        state: started
+        enabled: yes
+
+    - name: "Настройка root пароля"
+      mysql_user:
+        name: root
+        password: "{{ mysql_root_password }}"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+        check_implicit_admin: true
+        state: present
+      register: root_password_set
+      ignore_errors: yes
+
+    - name: "Создание .my.cnf для root пользователя"
+      copy:
+        content: |
+          [client]
+          user=root
+          password={{ mysql_root_password }}
+          socket=/var/run/mysqld/mysqld.sock
+          
+          [mysql]
+          user=root
+          password={{ mysql_root_password }}
+          socket=/var/run/mysqld/mysqld.sock
+          
+          [mysqldump]
+          user=root
+          password={{ mysql_root_password }}
+          socket=/var/run/mysqld/mysqld.sock
+        dest: /root/.my.cnf
+        owner: root
+        group: root
+        mode: '0600'
+        backup: yes
+
+    - name: "Создание базы данных Zabbix"
+      mysql_db:
+        name: "{{ zabbix_db_name }}"
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+        check_implicit_admin: true
+        encoding: utf8
+        collation: utf8_bin
+
+    - name: "Создание пользователя базы данных Zabbix"
+      mysql_user:
+        name: "{{ zabbix_db_user }}"
+        password: "{{ zabbix_db_password }}"
+        priv: "{{ zabbix_db_name }}.*:ALL"
+        host: localhost
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+        check_implicit_admin: true
+
+    - name: "Тест подключения к БД Zabbix"
+      mysql_db:
+        name: "{{ zabbix_db_name }}"
+        state: present
+        login_user: "{{ zabbix_db_user }}"
+        login_password: "{{ zabbix_db_password }}"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+      register: zabbix_db_test
+
+    - name: "Проверка существования таблиц Zabbix"
+      shell: "mysql --defaults-file=/root/.my.cnf {{ zabbix_db_name }} -e 'SHOW TABLES;' 2>/dev/null | wc -l"
+      register: zabbix_tables_count
+      changed_when: false
+
+    - name: "Импорт начальной схемы базы данных Zabbix"
+      shell: |
+        echo "Импортируем схему Zabbix в базу {{ zabbix_db_name }}..."
+        zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql --defaults-file=/root/.my.cnf {{ zabbix_db_name }}
+        echo "Схема успешно импортирована!"
+      when: zabbix_tables_count.stdout|int < 10
+      register: db_import_result
+
+    - name: "Финальная проверка БД после импорта"
+      shell: "mysql --defaults-file=/root/.my.cnf {{ zabbix_db_name }} -e 'SELECT COUNT(*) as table_count FROM information_schema.tables WHERE table_schema=\"{{ zabbix_db_name }}\";' -sN"
+      register: final_table_count
+      changed_when: false
+
+    - name: "PRODUCTION диагностика настройки БД"
+      debug:
+        msg:
+          - "=== РЕЗУЛЬТАТЫ НАСТРОЙКИ MARIADB ==="
+          - "Root пароль установлен: {{ 'Успешно' if root_password_set.changed else 'Уже был установлен' }}"
+          - "База данных создана: {{ zabbix_db_name }}"
+          - "Пользователь создан: {{ zabbix_db_user }}"
+          - "Таблиц до импорта: {{ zabbix_tables_count.stdout }}"
+          - "Импорт выполнен: {{ 'Да' if db_import_result.changed else 'Не требовался' }}"
+          - "Таблиц после импорта: {{ final_table_count.stdout }}"
+          - "===================================="
+
+  rescue:
+    - name: "CRITICAL ERROR: Диагностика проблем MariaDB"
+      debug:
+        msg:
+          - "!!! КРИТИЧЕСКАЯ ОШИБКА НАСТРОЙКИ MARIADB !!!"
+          - "Проверьте статус MariaDB: systemctl status mariadb"
+          - "Проверьте логи: journalctl -u mariadb -n 50"
+          - "Попробуйте ручное подключение: sudo mysql"
+          - "Socket файл: ls -la /var/run/mysqld/mysqld.sock"
+
+    - name: "Попытка аварийного восстановления через mariadb-admin"
+      shell: |
+        echo "Пытаемся настроить MariaDB через mariadb-admin..."
+        mariadb-admin -u root password '{{ mysql_root_password }}' || true
+        echo "Создаем базу и пользователя..."
+        mariadb -u root -p'{{ mysql_root_password }}' -e "CREATE DATABASE IF NOT EXISTS {{ zabbix_db_name }} CHARACTER SET utf8 COLLATE utf8_bin;" || true
+        mariadb -u root -p'{{ mysql_root_password }}' -e "CREATE USER IF NOT EXISTS '{{ zabbix_db_user }}'@'localhost' IDENTIFIED BY '{{ zabbix_db_password }}';" || true
+        mariadb -u root -p'{{ mysql_root_password }}' -e "GRANT ALL PRIVILEGES ON {{ zabbix_db_name }}.* TO '{{ zabbix_db_user }}'@'localhost';" || true
+        mariadb -u root -p'{{ mysql_root_password }}' -e "FLUSH PRIVILEGES;" || true
+      register: emergency_setup
+      ignore_errors: yes
+
+    - fail:
+        msg: "Не удалось настроить MariaDB. Проверьте статус службы и права доступа."
+      when: emergency_setup.failed
+
+- name: "Настройка nginx для Zabbix"
+  template:
+    src: nginx_zabbix.conf.j2
+    dest: /etc/zabbix/nginx.conf
+    owner: root
+    group: root
+    mode: '0644'
+    backup: yes
+  notify: restart nginx
+
+- name: "Настройка PHP для Zabbix"
+  template:
+    src: zabbix_php.ini.j2
+    dest: "/etc/php/{{ php_version }}/fpm/conf.d/99-zabbix.ini"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart php-fpm
+
+- name: "Проверка что конфигурация nginx создана"
+  stat:
+    path: /etc/zabbix/nginx.conf
+  register: nginx_conf_stat
+
+- name: "Ошибка если конфигурация nginx не найдена"
+  fail:
+    msg: "Файл /etc/zabbix/nginx.conf не найден. Проверьте template задачу."
+  when: not nginx_conf_stat.stat.exists
+
+- name: "Создание символической ссылки для nginx конфигурации"
+  file:
+    src: /etc/zabbix/nginx.conf
+    dest: /etc/nginx/conf.d/zabbix.conf
+    state: link
+    force: yes
+    owner: root
+    group: root
+  notify: restart nginx
+
+- name: "Удаление default nginx конфигурации"
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: restart nginx
+
+- name: "Создание директории для скриптов оповещений"
+  file:
+    path: /usr/lib/zabbix/alertscripts
+    state: directory
+    owner: zabbix
+    group: zabbix
+    mode: '0755'
+
+- name: "Создание скрипта для Telegram уведомлений"
+  template:
+    src: telegram.sh.j2
+    dest: /usr/lib/zabbix/alertscripts/telegram.sh
+    owner: zabbix
+    group: zabbix
+    mode: '0755'
+
+- name: "Запуск и автозагрузка сервисов Zabbix"
+  systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: yes
+  loop:
+    - zabbix-server
+    - zabbix-agent
+    - nginx
+    - "php{{ php_version }}-fpm"
+
+- name: "Проверка состояния Zabbix Server"
+  uri:
+    url: "http://{{ nginx_server_name }}"
+    method: GET
+    status_code: 200
+  register: zabbix_health_check
+  retries: 5
+  delay: 10
+  tags: [health_check]
+
+- name: "Вывод информации о доступе к Zabbix"
+  debug:
+    msg:
+      - "============ ZABBIX SERVER РАЗВЕРНУТ УСПЕШНО ============"
+      - "URL: http://{{ nginx_server_name }}"
+      - "Логин по умолчанию: Admin"
+      - "Пароль по умолчанию: zabbix"
+      - "КРИТИЧЕСКИ ВАЖНО: Смените пароль администратора!"
+      - "База данных: {{ zabbix_db_name }}"
+      - "Telegram настроен: Token ends with ...{{ telegram_bot_token[-8:] }}"
+      - "Фамилия в уведомлениях: {{ user_surname }}"
+      - "======================================================="

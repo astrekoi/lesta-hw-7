@@ -1,0 +1,94 @@
+- name: "Обновление системы на Agent сервере"
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: "Установка необходимых зависимостей для Agent"
+  apt:
+    name:
+      - wget
+      - curl
+      - gnupg2
+    state: present
+
+- name: "Добавление официального репозитория Zabbix 7.0 LTS"
+  get_url:
+    url: "https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.0-2+ubuntu{{ ansible_distribution_version }}_all.deb"
+    dest: /tmp/zabbix-release.deb
+    mode: '0644'
+
+- name: "Установка пакета репозитория Zabbix"
+  apt:
+    deb: /tmp/zabbix-release.deb
+    state: present
+
+- name: "Обновление кэша пакетов"
+  apt:
+    update_cache: yes
+
+- name: "Установка Zabbix Agent"
+  apt:
+    name: zabbix-agent
+    state: present
+  notify: restart zabbix-agent
+
+- name: "Настройка конфигурации Zabbix Agent"
+  template:
+    src: zabbix_agentd.conf.j2
+    dest: /etc/zabbix/zabbix_agentd.conf
+    owner: root
+    group: zabbix
+    mode: '0640'
+    backup: yes
+  notify: restart zabbix-agent
+
+- name: "Создание директории для пользовательских параметров"
+  file:
+    path: /etc/zabbix/zabbix_agentd.conf.d
+    state: directory
+    owner: zabbix
+    group: zabbix
+    mode: '0755'
+
+- name: "Создание пользовательских параметров для мониторинга"
+  template:
+    src: zabbix_agentd.userparams.conf.j2
+    dest: /etc/zabbix/zabbix_agentd.conf.d/userparams.conf
+    owner: root
+    group: zabbix
+    mode: '0644'
+  notify: restart zabbix-agent
+
+- name: "Проверка конфигурации Zabbix Agent"
+  shell: "zabbix_agentd -T"
+  register: agent_config_test
+  failed_when: "'validation successful' not in agent_config_test.stdout|lower"
+  changed_when: false
+
+- name: "Запуск и автозагрузка Zabbix Agent"
+  systemd:
+    name: zabbix-agent
+    state: started
+    enabled: yes
+
+- name: "Проверка работы Zabbix Agent"
+  command: systemctl is-active zabbix-agent
+  register: agent_status
+  changed_when: false
+
+- name: "Проверка подключения к Zabbix Server"
+  wait_for:
+    host: "{{ zabbix_server_ip }}"
+    port: 10051
+    timeout: 30
+  register: server_connectivity
+
+- name: "Вывод информации об Agent"
+  debug:
+    msg:
+      - "========== ZABBIX AGENT НАСТРОЕН УСПЕШНО =========="
+      - "Hostname: {{ zabbix_agent_hostname }}"
+      - "Server IP: {{ zabbix_server_ip }}"
+      - "Agent Status: {{ agent_status.stdout }}"
+      - "Подключение к серверу: OK"
+      - "=================================================="
