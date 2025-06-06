@@ -83,8 +83,8 @@ CPU utilization: 95%
 
 ```
 .
-├── ansible.cfg                    # Конфигурация Ansible
-├── host_vars                      # Переменные хостов
+├── ansible.cfg                   # Конфигурация Ansible
+├── host_vars                     # Переменные хостов
 │   ├── zabbix_agent
 │   │   └── vault.yaml            # Зашифрованные данные агента
 │   └── zabbix_server
@@ -99,7 +99,7 @@ CPU utilization: 95%
     │   ├── tasks
     │   │   └── main.yml          # Задачи установки и настройки агента
     │   ├── templates
-    │   │   ├── zabbix_agentd.conf.j2           # Конфигурация агента
+    │   │   ├── zabbix_agentd.conf.j2            # Конфигурация агента
     │   │   └── zabbix_agentd.userparams.conf.j2 # Пользовательские параметры
     │   └── vars
     │       └── main.yml          # Переменные роли агента
